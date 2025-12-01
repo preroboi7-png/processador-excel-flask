@@ -1,12 +1,15 @@
 import io
 import datetime
 import unicodedata
+import re
 from flask import Flask, request, send_file, render_template
 from openpyxl import load_workbook, Workbook
 from openpyxl.styles import Alignment, Border, Side, Font
 from openpyxl.utils.dataframe import dataframe_to_rows
+from openpyxl.utils.exceptions import InvalidFileException
 
-# Bibliotecas necessárias para a "Simulação de Ctrl+C / Ctrl+V"
+# --- IMPORTAÇÕES DE COMPATIBILIDADE ---
+# Certifique-se de que pandas, lxml e xlrd estejam instalados
 try:
     import pandas as pd
     import lxml
@@ -22,90 +25,11 @@ except ImportError:
 app = Flask(__name__, template_folder='.', static_folder='.', static_url_path='')
 
 # ==============================================================================
-# 1. SIMULAÇÃO DO PROCESSO HUMANO (CTRL+C / CTRL+V)
-# ==============================================================================
-
-def simular_ctrl_c_ctrl_v(file_stream, filename):
-    """
-    Simula a ação de abrir o arquivo (seja HTML ou XLS), selecionar tudo,
-    copiar e colar em uma planilha Excel 2007-365 limpa.
-    """
-    file_stream.seek(0)
-    
-    # Prepara o Workbook "Limpo" (Onde daremos o Ctrl+V)
-    wb_limpo = Workbook()
-    ws_limpo = wb_limpo.active
-    
-    df = None
-
-    # TENTATIVA 1: Tratar como HTML (O "Fake XLS")
-    # Isso equivale a abrir o HTML no navegador/Excel e copiar a tabela
-    try:
-        if pd is None: raise EnvironmentError("Pandas não instalado")
-        
-        # header=None é o segredo: ele pega TUDO como dados brutos (igual Ctrl+A)
-        # não tenta adivinhar cabeçalho
-        dfs = pd.read_html(
-            file_stream.read().decode('utf-8', errors='ignore'), 
-            header=None, 
-            decimal=',', 
-            thousands='.'
-        )
-        
-        if dfs:
-            # Pega a tabela com mais dados (geralmente a principal)
-            df = max(dfs, key=lambda x: x.size)
-            print("LOG: Tabela HTML copiada com sucesso.")
-            
-    except Exception as e:
-        # TENTATIVA 2: Se falhar (talvez seja um XLS binário real), usa xlrd
-        if filename.endswith('.xls') and xlrd:
-            try:
-                print("LOG: Tentando ler como binário XLS...")
-                file_stream.seek(0)
-                book = xlrd.open_workbook(file_contents=file_stream.read(), formatting_info=False)
-                sheet = book.sheet_by_index(0)
-                
-                # Converte sheet xlrd para lista de listas (simula copia)
-                dados = []
-                for r in range(sheet.nrows):
-                    linha = []
-                    for c in range(sheet.ncols):
-                        val = sheet.cell_value(r, c)
-                        # Trata data do excel antigo
-                        if sheet.cell_type(r, c) == xlrd.XL_CELL_DATE:
-                            try: val = xldate.xldate_as_datetime(val, book.datemode)
-                            except: pass
-                        linha.append(val)
-                    dados.append(linha)
-                
-                # Joga direto no Excel limpo
-                for row in dados:
-                    ws_limpo.append(row)
-                
-                return wb_limpo # Retorna o Excel "Colado"
-                
-            except Exception as erro_xls:
-                print(f"Erro na leitura binária: {erro_xls}")
-
-    # Se conseguiu ler como HTML (DataFrame), agora fazemos o "Ctrl+V" no Excel
-    if df is not None:
-        # dataframe_to_rows joga linha por linha no Excel
-        # header=False e index=False garantem que só colamos os dados puros
-        for row in dataframe_to_rows(df, index=False, header=False):
-            # Limpeza básica de valores NaN (vazios)
-            row_limpa = ["" if pd.isna(x) else x for x in row]
-            ws_limpo.append(row_limpa)
-    else:
-        raise ValueError("Não foi possível copiar os dados do arquivo (formato não reconhecido).")
-
-    return wb_limpo
-
-# ==============================================================================
-# 2. FUNÇÕES DE LIMPEZA E TEXTO
+# 1. FUNÇÕES AUXILIARES (Texto, Data e Limpeza)
 # ==============================================================================
 
 def normalizar(texto):
+    """Remove acentos e deixa maiúsculo."""
     if texto is None: return ""
     return ''.join(c for c in unicodedata.normalize("NFD", str(texto).strip()) 
                    if unicodedata.category(c) != "Mn").upper()
@@ -120,7 +44,7 @@ def separar_duas_linhas(texto):
     return txt, ""
 
 def limpar_valor_monetario(valor):
-    """Transforma R$ texto em float"""
+    """Transforma R$ texto em float."""
     if isinstance(valor, (int, float)): return float(valor)
     if isinstance(valor, str):
         v = valor.replace("R$", "").replace(" ", "").replace(".", "").replace(",", ".")
@@ -129,12 +53,12 @@ def limpar_valor_monetario(valor):
     return 0.0
 
 def converter_data(valor):
-    """Tenta converter string para data"""
+    """Tenta converter string para data."""
     if not valor: return None
     if isinstance(valor, (datetime.datetime, datetime.date)): return valor
     
-    formatos = ["%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d"]
-    v_str = str(valor).strip().split(' ')[0]
+    formatos = ["%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d", "%m-%Y", "%m/%Y"]
+    v_str = str(valor).strip().split(' ')[0] # Remove hora se houver
     
     for fmt in formatos:
         try: return datetime.datetime.strptime(v_str, fmt)
@@ -142,37 +66,142 @@ def converter_data(valor):
     return None
 
 def mes_abreviado(data):
+    """Formata data para mmm-aa."""
     meses = {1:"jan", 2:"fev", 3:"mar", 4:"abr", 5:"mai", 6:"jun",
              7:"jul", 8:"ago", 9:"set", 10:"out", 11:"nov", 12:"dez"}
     return f"{meses.get(data.month, '')}-{str(data.year)[-2:]}"
 
 # ==============================================================================
-# 3. LÓGICA DE FILTRO (Usando o arquivo "Colado")
+# 2. FUNÇÕES DE LEITURA ESPECÍFICAS (Fallbacks)
+# ==============================================================================
+
+def is_html_file(file_stream):
+    """Detecta se é um 'fake XLS' (HTML) sem consumir o stream."""
+    pos = file_stream.tell()
+    file_stream.seek(0)
+    try:
+        head = file_stream.read(2048)
+        # Assinaturas comuns de HTML/XML/UTF-8 BOM
+        if b'<html' in head or b'<table' in head or b'\xef\xbb\xbf' in head or b'<?xml' in head:
+            return True
+    except: pass
+    finally:
+        file_stream.seek(pos)
+    return False
+
+def ler_html_para_workbook(file_stream):
+    """Lê HTML via Pandas (simulação Ctrl+C) e retorna um Workbook Openpyxl limpo."""
+    if pd is None: raise EnvironmentError("Pandas não instalado para ler HTML.")
+    
+    file_stream.seek(0)
+    # header=None para pegar TUDO como dados, simulando a cópia.
+    dfs = pd.read_html(file_stream.read().decode('utf-8', errors='ignore'), header=None, decimal=',', thousands='.')
+    
+    if not dfs: raise ValueError("Nenhuma tabela encontrada no HTML.")
+    
+    df = max(dfs, key=lambda x: x.size)
+    wb_limpo = Workbook()
+    ws_limpo = wb_limpo.active
+
+    for row in dataframe_to_rows(df, index=False, header=False):
+        row_limpa = ["" if pd.isna(x) else x for x in row]
+        ws_limpo.append(row_limpa)
+        
+    return wb_limpo
+
+def ler_xls_binario_para_workbook(file_stream):
+    """Lê XLS binário via xlrd e retorna um Workbook Openpyxl limpo."""
+    if xlrd is None: raise EnvironmentError("xlrd não instalado para ler XLS binário.")
+    
+    file_stream.seek(0)
+    book = xlrd.open_workbook(file_contents=file_stream.read(), formatting_info=False)
+    sheet = book.sheet_by_index(0)
+    
+    wb_limpo = Workbook()
+    ws_limpo = wb_limpo.active
+
+    for r in range(sheet.nrows):
+        row_vals = []
+        for c in range(sheet.ncols):
+            val = sheet.cell_value(r, c)
+            if sheet.cell_type(r, c) == xlrd.XL_CELL_DATE:
+                try: val = xldate.xldate_as_datetime(val, book.datemode)
+                except: pass
+            row_vals.append(val)
+        ws_limpo.append(row_vals)
+        
+    return wb_limpo
+
+# ==============================================================================
+# 3. FUNÇÃO CENTRAL DE CARREGAMENTO (FLUXO ROBUSTO DE PRIORIDADE)
+# ==============================================================================
+
+def carregar_workbook_inicial(file_stream_bytes, filename):
+    """
+    Tenta carregar o arquivo na ordem correta:
+    1. XLSX Padrão (OpenPyXL)
+    2. HTML/XML (Fake XLS via Pandas)
+    3. XLS Binário (xlrd)
+    """
+    
+    # 1. TENTA CARREGAR COMO FORMATO OPENPYXL PADRÃO (.xlsx, .xlsm, etc.)
+    try:
+        print("LOG: [PRIORIDADE] Tentando carregar como XLSX/XLSM padrão...")
+        stream_xlsx = io.BytesIO(file_stream_bytes)
+        return load_workbook(stream_xlsx)
+    except InvalidFileException:
+        print("LOG: Falhou no XLSX. O arquivo não é um formato OpenPyXL válido.")
+        pass
+    except Exception as e:
+        print(f"LOG: Erro inesperado ao carregar XLSX/XLSM, tentando fallback: {e}")
+        pass
+
+    # 2. TENTA LER COMO HTML (FAKE XLS)
+    stream_html_detect = io.BytesIO(file_stream_bytes)
+    if is_html_file(stream_html_detect):
+        print("LOG: Detectado HTML (Fake XLS). Lendo com Pandas...")
+        stream_html_read = io.BytesIO(file_stream_bytes)
+        return ler_html_para_workbook(stream_html_read)
+    
+    # 3. TENTA LER COMO XLS BINÁRIO ANTIGO
+    elif filename.endswith('.xls'):
+        stream_xls_read = io.BytesIO(file_stream_bytes)
+        try:
+            print("LOG: Detectado XLS Binário. Lendo com xlrd...")
+            return ler_xls_binario_para_workbook(stream_xls_read)
+        except Exception as e:
+            # Caso o xlrd falhe (porque o XLS é na verdade HTML malfeito)
+            print(f"LOG: Falha no xlrd. Tentativa final via HTML/Pandas: {e}")
+            stream_html_read = io.BytesIO(file_stream_bytes)
+            return ler_html_para_workbook(stream_html_read)
+
+    raise ValueError("Formato de arquivo não suportado, corrompido ou incompatível.")
+
+# ==============================================================================
+# 4. LÓGICA DE FILTRO E PROCESSAMENTO
 # ==============================================================================
 
 def encontrar_cabecalho(ws):
-    """Procura em qual linha está o cabeçalho real (LANÇAMENTO/COMPETENCIA)"""
-    for r in range(1, 20): # Olha as primeiras 20 linhas
+    """Procura em qual linha está o cabeçalho real (LANÇAMENTO/VALOR)"""
+    for r in range(1, 20):
         row_vals = [normalizar(c.value) for c in ws[r]]
         txt_row = " ".join(row_vals)
-        # Se achar LANCAMENTO e VALOR na mesma linha, é o cabeçalho
         if "LANCAMENTO" in txt_row and "VALOR" in txt_row:
             return r
-    return 1
+    return 1 # Assume linha 1 como fallback
 
 def processar_arquivo_limpo(wb_entrada, mes, ano):
     ws_entrada = wb_entrada.active
     
-    # 1. Achar onde começa a tabela
     linha_header = encontrar_cabecalho(ws_entrada)
     
-    # 2. Mapear colunas
+    # Mapeamento de Colunas (usando a linha de cabeçalho encontrada)
     mapa = {}
     for cell in ws_entrada[linha_header]:
         if cell.value:
             mapa[normalizar(cell.value)] = cell.column
 
-    # Índices (tenta pegar pelo nome, se falhar tenta posição relativa fixa)
+    # Mapeamento de índices (Baseado na estrutura da sua planilha)
     idx_lanc = mapa.get("LANCAMENTO") or 1
     idx_rubrica = mapa.get("RUBRICA") or 3
     idx_tipo = mapa.get("TIPO DOCUMENTO") or mapa.get("TIPO DOCUM") or 4
@@ -181,43 +210,40 @@ def processar_arquivo_limpo(wb_entrada, mes, ano):
     idx_valor = mapa.get("VALOR") or 7
     idx_sit = mapa.get("SITUACAO") or 8
 
-    # 3. Criar arquivo final
+    # Cria arquivo final
     wb_final = Workbook()
     ws_final = wb_final.active
     ws_final.append(["CÓDIGO", "FORNECEDOR", "RUBRICA", "DOCUMENTO", "COMPETÊNCIA", "DATA", "SITUAÇÃO", "VALOR"])
 
-    # 4. Iterar e Filtrar
     for row in ws_entrada.iter_rows(min_row=linha_header + 1, values_only=True):
-        if not any(row): continue # Pula linha vazia
+        if not any(row): continue
         
-        # Pega a data de competência
         try:
             raw_comp = row[idx_comp - 1]
             dt_comp = converter_data(raw_comp)
         except: continue
 
-        # Verifica filtro
+        # FILTRO DE MÊS/ANO
         if dt_comp and dt_comp.month == mes and dt_comp.year == ano:
             
-            # Tratamento dos dados (Separar nomes, limpar códigos)
+            # Extração dos dados
             raw_lanc = row[idx_lanc - 1] if idx_lanc <= len(row) else ""
-            forn, cod = separar_duas_linhas(raw_lanc)
-            cod = cod.replace("Cod.:", "").replace("Cod:", "").strip()
+            forn, cod_txt = separar_duas_linhas(raw_lanc)
+            codigo = cod_txt.replace("Cod.:", "").replace("Cod:", "").strip()
 
             raw_tipo = row[idx_tipo - 1] if idx_tipo <= len(row) else ""
-            tipo, doc = separar_duas_linhas(raw_tipo)
-            doc = doc.replace("Doc.:", "").replace("Doc:", "").strip()
-
-            raw_valor = row[idx_valor - 1] if idx_valor <= len(row) else 0
-            val_float = limpar_valor_monetario(raw_valor)
+            tipo, doc_txt = separar_duas_linhas(raw_tipo)
+            documento = doc_txt.replace("Doc.:", "").replace("Doc:", "").strip()
 
             rubrica = row[idx_rubrica - 1] if idx_rubrica <= len(row) else ""
             situacao = row[idx_sit - 1] if idx_sit <= len(row) else ""
+            raw_valor = row[idx_valor - 1] if idx_valor <= len(row) else 0
+            val_float = limpar_valor_monetario(raw_valor)
             dt_pag = converter_data(row[idx_data - 1]) if idx_data <= len(row) else None
 
-            ws_final.append([cod, forn, rubrica, doc, dt_comp, dt_pag, situacao, val_float])
+            ws_final.append([codigo, forn, rubrica, documento, dt_comp, dt_pag, situacao, val_float])
 
-    # 5. Formatação
+    # Formatação
     thin = Side(style="thin")
     borda = Border(left=thin, right=thin, top=thin, bottom=thin)
     
@@ -229,24 +255,22 @@ def processar_arquivo_limpo(wb_entrada, mes, ano):
                 cell.alignment = Alignment(horizontal='center')
             else:
                 if cell.column in [1, 5, 6]: cell.alignment = Alignment(horizontal='center')
-                elif cell.column == 8: # Valor
+                elif cell.column == 8: 
                     cell.alignment = Alignment(horizontal='right')
                     cell.number_format = '#,##0.00'
                 
-                # Formata Data Visual
                 if cell.column == 5 and isinstance(cell.value, datetime.datetime):
                      cell.value = mes_abreviado(cell.value)
                 if cell.column == 6 and isinstance(cell.value, datetime.datetime):
                      cell.number_format = 'dd/mm/yyyy'
 
-    # Salvar em memória
     out = io.BytesIO()
     wb_final.save(out)
     out.seek(0)
     return out
 
 # ==============================================================================
-# ROTAS
+# 5. ROTAS FLASK
 # ==============================================================================
 
 @app.route("/")
@@ -263,19 +287,31 @@ def processar():
         mes = int(request.form.get('mes'))
         ano = int(request.form.get('ano'))
         
-        # PASSO 1: Simular Ctrl+C (do arquivo original) -> Ctrl+V (num Excel novo)
-        print("LOG: Iniciando 'Copia e Cola' virtual...")
-        wb_limpo = simular_ctrl_c_ctrl_v(file.stream, file.filename.lower())
+        # Lê o conteúdo binário do arquivo na memória APENAS UMA VEZ
+        file_bytes = file.read()
+        filename = file.filename.lower()
         
-        # PASSO 2: Usar o Excel novo para processar
-        print("LOG: Processando dados limpos...")
-        output = processar_arquivo_limpo(wb_limpo, mes, ano)
+        # 1. Carrega o arquivo usando a função robusta
+        wb_entrada = carregar_workbook_inicial(file_bytes, filename)
+        
+        # 2. Processamento e filtragem
+        print("LOG: Processando dados e filtrando...")
+        output = processar_arquivo_limpo(wb_entrada, mes, ano)
         
         return send_file(output, as_attachment=True, download_name=f"processado_{mes}_{ano}.xlsx", mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
     except Exception as e:
-        print(f"ERRO: {e}")
-        return f"Erro: {str(e)}", 500
+        error_message = f"Não foi possível processar o arquivo. Detalhe: {str(e)}"
+        
+        if "Nenhuma tabela encontrada" in str(e):
+             error_message = "Não foi possível extrair a tabela do arquivo (Verifique se é um XLS/HTML válido)."
+        if "Formato de arquivo não suportado" in str(e):
+             error_message = "Formato de arquivo não suportado ou arquivo corrompido."
+        if "No such file or directory" in str(e):
+             error_message = "Erro de leitura do arquivo. Certifique-se de que o arquivo não está sendo usado por outro programa."
+        
+        print(f"ERRO CRÍTICO: {e}")
+        return f"Erro: {error_message}", 500
 
 if __name__ == "__main__":
     app.run(debug=True)
