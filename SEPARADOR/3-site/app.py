@@ -226,15 +226,31 @@ def processar_arquivo_limpo(wb_entrada, mes, ano):
         # FILTRO DE MÊS/ANO
         if dt_comp and dt_comp.month == mes and dt_comp.year == ano:
             
-            # Extração dos dados
+            # --- CORREÇÃO DE EXTRAÇÃO DE CÓDIGO/FORNECEDOR ---
             raw_lanc = row[idx_lanc - 1] if idx_lanc <= len(row) else ""
-            forn, cod_txt = separar_duas_linhas(raw_lanc)
-            codigo = cod_txt.replace("Cod.:", "").replace("Cod:", "").strip()
+            full_lanc_text = str(raw_lanc).strip()
+            
+            codigo = ""
+            forn = full_lanc_text
 
+            if "\n" in full_lanc_text:
+                # Caso 1: Formato ideal (Nome \n Código)
+                partes = full_lanc_text.split("\n", 1)
+                forn = partes[0].strip()
+                cod_txt = partes[1].strip()
+                codigo = cod_txt.replace("Cod.:", "").replace("Cod:", "").strip()
+            elif "COD:" in normalizar(full_lanc_text):
+                # Caso 2: Linha única contendo apenas o código (Ex: "Cod.: 12345")
+                codigo = full_lanc_text.replace("Cod.:", "").replace("Cod:", "").strip()
+                forn = "" # O fornecedor está vazio nesta célula
+            # Se não houver '\n' nem "COD:", o código permanece vazio e 'forn' contém o texto completo.
+            
+            # 2. TIPO DOCUMENTO (Tipo e Doc) -> Mantém a lógica original
             raw_tipo = row[idx_tipo - 1] if idx_tipo <= len(row) else ""
             tipo, doc_txt = separar_duas_linhas(raw_tipo)
             documento = doc_txt.replace("Doc.:", "").replace("Doc:", "").strip()
 
+            # 3. Campos Diretos e Valor
             rubrica = row[idx_rubrica - 1] if idx_rubrica <= len(row) else ""
             situacao = row[idx_sit - 1] if idx_sit <= len(row) else ""
             raw_valor = row[idx_valor - 1] if idx_valor <= len(row) else 0
