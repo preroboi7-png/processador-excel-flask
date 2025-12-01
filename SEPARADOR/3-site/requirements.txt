@@ -1,4 +1,6 @@
 Flask
 openpyxl
 xlrd
+pandas
+lxml
 gunicorn
