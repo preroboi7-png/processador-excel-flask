@@ -1,13 +1,13 @@
 import io
 import datetime
 import unicodedata
+import re
 from flask import Flask, request, send_file, render_template
 from openpyxl import load_workbook, Workbook
 from openpyxl.styles import Alignment, Border, Side, Font
-from openpyxl.utils.exceptions import InvalidFileException
 from openpyxl.utils.dataframe import dataframe_to_rows
 
-# Importações para tratar arquivos antigos e HTML
+# --- IMPORTAÇÕES DE COMPATIBILIDADE ---
 try:
     import xlrd
     from xlrd import xldate
@@ -16,279 +16,302 @@ except ImportError:
 
 try:
     import pandas as pd
+    import lxml
 except ImportError:
     pd = None
 
 app = Flask(__name__, template_folder='.', static_folder='.', static_url_path='')
 
-# --- 1. FUNÇÕES DE CONVERSÃO E DETECÇÃO ---
-
-def is_html_file(file_stream):
-    """
-    Verifica se o arquivo é HTML (comum em exportações 'fake' .xls).
-    Lê os primeiros bytes para procurar tags como <table ou <html.
-    """
-    start_pos = file_stream.tell()
-    file_stream.seek(0)
-    try:
-        # Lê o início do arquivo (decodificando bytes para string)
-        header = file_stream.read(1024)
-        # Verifica assinatura de HTML ou BOM UTF-8 seguido de tag
-        if b'<html' in header or b'<table' in header or b'<div' in header:
-            return True
-        if b'\xef\xbb\xbf<tabl' in header: # Assinatura específica do seu erro
-            return True
-    except:
-        pass
-    finally:
-        file_stream.seek(start_pos) # Retorna o ponteiro para o início
-    return False
-
-def convert_html_to_xlsx(file_stream):
-    """Lê HTML e converte para XLSX usando Pandas"""
-    if pd is None:
-        raise EnvironmentError("Instale 'pandas' e 'lxml' para ler arquivos HTML/XLS.")
-    
-    file_stream.seek(0)
-    # Tenta ler as tabelas do HTML
-    try:
-        dfs = pd.read_html(file_stream.read().decode('utf-8', errors='ignore'), decimal=',', thousands='.')
-    except ValueError:
-        raise ValueError("Não foi possível encontrar uma tabela no arquivo HTML.")
-
-    if not dfs:
-        raise ValueError("Arquivo HTML vazio ou sem tabelas.")
-
-    # Pega a maior tabela encontrada (assumindo ser a principal)
-    df = max(dfs, key=len)
-
-    # Converte para Workbook OpenPyXL
-    wb = Workbook()
-    ws = wb.active
-
-    for r in dataframe_to_rows(df, index=False, header=True):
-        ws.append(r)
-
-    output = io.BytesIO()
-    wb.save(output)
-    output.seek(0)
-    return output
-
-def convert_xls_to_openpyxl_stream(file_stream):
-    """Converte XLS binário (1997-2003) para XLSX"""
-    if xlrd is None:
-        raise EnvironmentError("Instale 'xlrd' para processar arquivos .xls antigos.")
-
-    file_stream.seek(0)
-    file_content = file_stream.read()
-    
-    book_xls = xlrd.open_workbook(file_contents=file_content, formatting_info=False)
-    sheet_xls = book_xls.sheet_by_index(0)
-
-    wb_xlsx = Workbook()
-    ws_xlsx = wb_xlsx.active
-
-    for row in range(sheet_xls.nrows):
-        new_row = []
-        for col in range(sheet_xls.ncols):
-            val = sheet_xls.cell_value(row, col)
-            cell_type = sheet_xls.cell_type(row, col)
-
-            if cell_type == xlrd.XL_CELL_DATE:
-                try:
-                    dt = xldate.xldate_as_datetime(val, book_xls.datemode)
-                    val = dt
-                except: pass
-            elif cell_type == xlrd.XL_CELL_NUMBER:
-                if val == int(val): val = int(val)
-
-            new_row.append(val)
-        ws_xlsx.append(new_row)
-
-    output = io.BytesIO()
-    wb_xlsx.save(output)
-    output.seek(0)
-    return output
-
-# --- 2. FUNÇÕES AUXILIARES DE LIMPEZA ---
-
-def separar_duas_linhas(texto):
-    if texto is None: return "", ""
-    partes = str(texto).split("\n")
-    if len(partes) >= 2:
-        return partes[0].strip(), partes[1].strip()
-    return str(texto).strip(), ""
+# --- 1. FUNÇÕES UTILITÁRIAS (TEXTO E DATA) ---
 
 def normalizar(texto):
+    """Remove acentos e deixa maiúsculo (ex: 'LANÇAMENTO' -> 'LANCAMENTO')"""
     if texto is None: return ""
     texto = str(texto).strip()
     texto = unicodedata.normalize("NFD", texto)
     return ''.join(c for c in texto if unicodedata.category(c) != "Mn").upper()
 
-def encontrar_coluna(ws, nome):
-    nome = normalizar(nome)
-    # Procura na linha 1
-    for cell in ws[1]:
-        if normalizar(str(cell.value)) == nome:
-            return cell.column
+def separar_duas_linhas(texto):
+    """
+    Separa o texto da célula que contém duas informações.
+    Ex: "Nome da Pessoa\nCód: 123" -> Retorna ("Nome da Pessoa", "Cód: 123")
+    """
+    if not texto: return "", ""
+    txt = str(texto).strip()
+    
+    if "\n" in txt:
+        partes = txt.split("\n")
+        return partes[0].strip(), partes[1].strip()
+    
+    # Fallback: Se não tiver quebra de linha, retorna tudo na primeira parte
+    return txt, ""
+
+def limpar_valor_monetario(valor):
+    """Converte 'R$ 1.234,56' para float 1234.56"""
+    if isinstance(valor, (int, float)):
+        return float(valor)
+    
+    if isinstance(valor, str):
+        # Remove R$, espaços e pontos de milhar
+        limpo = valor.replace("R$", "").replace(" ", "").replace(".", "")
+        # Troca vírgula decimal por ponto
+        limpo = limpo.replace(",", ".")
+        try:
+            return float(limpo)
+        except ValueError:
+            return 0.0
+    return 0.0
+
+def converter_data_robusta(valor):
+    """Tenta converter string ou data para objeto datetime"""
+    if not valor: return None
+    
+    if isinstance(valor, (datetime.datetime, datetime.date)):
+        return valor
+        
+    # Lista de formatos possíveis
+    formatos = [
+        "%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", 
+        "%Y/%m/%d", "%d/%m/%y", "%m-%Y", "%m/%Y"
+    ]
+    
+    valor_str = str(valor).strip().split(' ')[0] # Remove hora se houver
+    
+    for fmt in formatos:
+        try:
+            return datetime.datetime.strptime(valor_str, fmt)
+        except ValueError:
+            continue
+            
     return None
 
-def atualizar_indices(ws):
-    return {
-        "FORNECEDOR": encontrar_coluna(ws, "LANÇAMENTO") or encontrar_coluna(ws, "FORNECEDOR"),
-        "RUBRICA": encontrar_coluna(ws, "RUBRÍCA"),
-        "CODIGO": encontrar_coluna(ws, "CÓDIGO"),
-        "DOCUMENTO": encontrar_coluna(ws, "DOCUMENTO"),
-        "COMP": encontrar_coluna(ws, "COMPETÊNCIA"),
-        "DATA": encontrar_coluna(ws, "DATA PAGAMENTO"),
-        "SITUACAO": encontrar_coluna(ws, "SITUAÇÃO"),
-        "VALOR": encontrar_coluna(ws, "VALOR"),
-        "CLASSIFICACAO": encontrar_coluna(ws, "CLASSIFICAÇÃO"),
-        "TIPO": encontrar_coluna(ws, "TIPO DOCUMENTO"),
-    }
+def mes_abreviado(data_obj):
+    if not data_obj: return ""
+    meses = {1:"jan", 2:"fev", 3:"mar", 4:"abr", 5:"mai", 6:"jun",
+             7:"jul", 8:"ago", 9:"set", 10:"out", 11:"nov", 12:"dez"}
+    return f"{meses.get(data_obj.month, '')}-{str(data_obj.year)[-2:]}"
 
-def mover_coluna(ws, origem_idx, destino_idx):
-    if not origem_idx or not destino_idx or origem_idx == destino_idx: return
-    max_row = ws.max_row
-    dados = [ws.cell(row=r, column=origem_idx).value for r in range(1, max_row + 1)]
-    ws.delete_cols(origem_idx)
+# --- 2. FUNÇÕES DE CONVERSÃO DE ARQUIVO ---
+
+def is_html_file(file_stream):
+    """Detecta se é um 'fake XLS' (HTML)"""
+    pos = file_stream.tell()
+    file_stream.seek(0)
+    try:
+        head = file_stream.read(2048)
+        if b'<html' in head or b'<table' in head or b'\xef\xbb\xbf' in head:
+            return True
+    except: pass
+    finally:
+        file_stream.seek(pos)
+    return False
+
+def convert_html_to_xlsx(file_stream):
+    """
+    Converte HTML para XLSX focando em achar o cabeçalho 'LANÇAMENTO'.
+    """
+    if pd is None: raise EnvironmentError("Instale pandas e lxml")
     
-    ajuste = 0 if origem_idx > destino_idx else -1
-    idx_final = max(1, destino_idx + ajuste)
+    file_stream.seek(0)
+    # header=None obriga o pandas a ler TUDO como dados, sem adivinhar cabeçalho
+    try:
+        dfs = pd.read_html(file_stream.read().decode('utf-8', errors='ignore'), header=None)
+    except ValueError: raise ValueError("Nenhuma tabela encontrada no HTML")
     
-    ws.insert_cols(idx_final)
-    for r in range(1, max_row + 1):
-        ws.cell(row=r, column=idx_final).value = dados[r-1]
-
-def mes_abreviado(m):
-    return {1:"jan", 2:"fev", 3:"mar", 4:"abr", 5:"mai", 6:"jun",
-            7:"jul", 8:"ago", 9:"set", 10:"out", 11:"nov", 12:"dez"}.get(m, "")
-
-# --- 3. LÓGICA PRINCIPAL ---
-
-def processar_excel_logic(file_stream, mes_filtro, ano_filtro):
-    wb_entrada = load_workbook(file_stream)
-    ws_entrada = wb_entrada.active
+    if not dfs: raise ValueError("Arquivo HTML vazio")
     
-    wb_filtrado = Workbook()
-    ws_filtrado = wb_filtrado.active
-
-    # Copia cabeçalhos
-    headers = [cell.value for cell in ws_entrada[1]]
-    if "CÓDIGO" not in headers: headers.append("CÓDIGO")
-    if "DOCUMENTO" not in headers: headers.append("DOCUMENTO")
-    ws_filtrado.append(headers)
-
-    idx_comp = encontrar_coluna(ws_entrada, "COMPETÊNCIA") or 5 # Padrão coluna 5
-    DATE_FORMATS = ["%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d"]
-
-    for row in ws_entrada.iter_rows(min_row=2, values_only=True):
-        if not any(row): continue
+    # Pega a tabela com mais colunas
+    df = max(dfs, key=lambda x: x.shape[1])
+    
+    # --- BUSCA A LINHA DE CABEÇALHO REAL ---
+    header_index = -1
+    
+    # Varre as primeiras 15 linhas procurando "LANÇAMENTO" e "VALOR"
+    for i, row in df.head(15).iterrows():
+        linha_txt = " ".join([normalizar(x) for x in row.values])
         
-        try: val_data = row[idx_comp - 1]
-        except IndexError: continue
-
-        data_obj = None
-        if isinstance(val_data, (datetime.datetime, datetime.date)):
-            data_obj = val_data
-        elif isinstance(val_data, str):
-            val_str = val_data.strip().split(' ')[0]
-            for fmt in DATE_FORMATS:
-                try:
-                    data_obj = datetime.datetime.strptime(val_str, fmt)
-                    break
-                except ValueError: continue
-        
-        if data_obj and data_obj.month == mes_filtro and data_obj.year == ano_filtro:
-            linha_nova = list(row)
+        # Palavras-chave baseadas na sua imagem
+        if "LANCAMENTO" in linha_txt and "VALOR" in linha_txt:
+            header_index = i
+            break
             
-            # Tratamento de linhas aglutinadas
-            # Tenta pegar índices dinâmicos, se não der, usa fixos (0 e 3)
-            idx_lanc = encontrar_coluna(ws_entrada, "LANÇAMENTO")
-            idx_tipo = encontrar_coluna(ws_entrada, "TIPO DOCUMENTO")
-            
-            i_lanc = (idx_lanc - 1) if idx_lanc else 0
-            i_tipo = (idx_tipo - 1) if idx_tipo else 3
+    if header_index >= 0:
+        # Define a linha encontrada como cabeçalho
+        df.columns = df.iloc[header_index]
+        # Pega os dados apenas DAÍ para baixo
+        df = df[header_index+1:].reset_index(drop=True)
+    else:
+        # Se não achou, assume a primeira linha (melhor que nada)
+        df.columns = df.iloc[0]
+        df = df[1:].reset_index(drop=True)
 
-            # Separa Fornecedor/Código
-            if i_lanc < len(linha_nova):
-                forn, cod = separar_duas_linhas(linha_nova[i_lanc])
-                linha_nova[i_lanc] = forn
-            else:
-                cod = ""
-
-            # Separa Tipo/Doc
-            if i_tipo < len(linha_nova):
-                tipo, doc = separar_duas_linhas(linha_nova[i_tipo])
-                linha_nova[i_tipo] = tipo
-            else:
-                doc = ""
-
-            linha_nova.append(cod)
-            linha_nova.append(doc)
-            ws_filtrado.append(linha_nova)
-
-    # --- 4. ESTILIZAÇÃO E FORMATAÇÃO ---
-    ws = ws_filtrado
-    col = atualizar_indices(ws)
-    
-    # Renomeia LANÇAMENTO
-    c_forn = col.get("FORNECEDOR")
-    if c_forn: ws.cell(row=1, column=c_forn).value = "FORNECEDOR"
-
-    # Apaga colunas desnecessárias
-    for nome in ["CLASSIFICACAO", "TIPO"]: # Apagar TIPO antigo se houver duplicata
-        idx = col.get(nome)
-        if idx: mover_coluna(ws, idx, 99) # Move pro fim (ou apaga se preferir)
-        # Nota: no código original apagava, aqui mantive simples. 
-        # Para apagar descomente abaixo:
-        # if idx: ws.delete_cols(idx) 
-
-    # Reordena
-    col = atualizar_indices(ws)
-    ordem = [("CODIGO", 1), ("FORNECEDOR", 2), ("RUBRICA", 3), ("DOCUMENTO", 4),
-             ("COMP", 5), ("DATA", 6), ("SITUACAO", 7), ("VALOR", 8)]
-    
-    for nome, nova_pos in ordem:
-        atual = col.get(nome)
-        if atual and atual != nova_pos:
-            mover_coluna(ws, atual, nova_pos)
-            col = atualizar_indices(ws) # Recalcula após mover
-
-    # Formata VALOR e Borda
-    borda = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
-    c_valor = col.get("VALOR")
-    c_comp = col.get("COMP")
-
-    for row in ws.iter_rows():
-        for cell in row:
-            if cell.value is not None:
-                cell.border = borda
-                if cell.row == 1: cell.font = Font(bold=True)
-                
-                # Formata Valor
-                if c_valor and cell.column == c_valor and cell.row > 1:
-                    if isinstance(cell.value, str):
-                        try:
-                            v = float(cell.value.replace("R$", "").replace(".", "").replace(",", ".").strip())
-                            cell.value = v
-                        except: pass
-                    cell.number_format = '#,##0.00'
-
-                # Formata Competência (mmm-aa)
-                if c_comp and cell.column == c_comp and cell.row > 1:
-                    val = cell.value
-                    try:
-                        if isinstance(val, (datetime.date, datetime.datetime)):
-                            cell.value = f"{mes_abreviado(val.month)}-{str(val.year)[-2:]}"
-                    except: pass
-
+    # Exporta para XLSX limpo em memória
     output = io.BytesIO()
-    wb_filtrado.save(output)
+    wb = Workbook()
+    ws = wb.active
+    
+    for r in dataframe_to_rows(df, index=False, header=True):
+        ws.append(r)
+        
+    wb.save(output)
     output.seek(0)
     return output
 
-# --- ROTAS ---
+def convert_xls_to_xlsx(file_stream):
+    """Converte XLS antigo (binário) para XLSX"""
+    if xlrd is None: raise EnvironmentError("Instale xlrd")
+    file_stream.seek(0)
+    book = xlrd.open_workbook(file_contents=file_stream.read(), formatting_info=False)
+    sheet = book.sheet_by_index(0)
+    
+    wb = Workbook()
+    ws = wb.active
+    
+    for r in range(sheet.nrows):
+        row_vals = []
+        for c in range(sheet.ncols):
+            val = sheet.cell_value(r, c)
+            ctype = sheet.cell_type(r, c)
+            if ctype == xlrd.XL_CELL_DATE:
+                try: val = xldate.xldate_as_datetime(val, book.datemode)
+                except: pass
+            row_vals.append(val)
+        ws.append(row_vals)
+        
+    out = io.BytesIO()
+    wb.save(out)
+    out.seek(0)
+    return out
+
+# --- 3. LÓGICA DE PROCESSAMENTO (MAPEAR E FILTRAR) ---
+
+def processar_dados(file_stream, mes, ano):
+    wb_in = load_workbook(file_stream)
+    ws_in = wb_in.active
+    
+    # 1. Mapeamento de Colunas (Onde está o que?)
+    # Baseado na sua imagem: LANÇAMENTO, CLASSIFICAÇÃO, RUBRICA, TIPO DOC, COMPETÊNCIA, DATA PAG, VALOR, SITUAÇÃO
+    mapa = {}
+    
+    # Procura o cabeçalho na linha 1
+    for cell in ws_in[1]:
+        if not cell.value: continue
+        nome = normalizar(cell.value)
+        mapa[nome] = cell.column # Guarda o índice da coluna (1, 2, 3...)
+
+    # Tenta encontrar índices essenciais. Se não achar pelo nome, tenta posição fixa baseada na imagem
+    # A=1, B=2, C=3, D=4, E=5, F=6, G=7, H=8
+    idx_lanc = mapa.get("LANCAMENTO") or 1
+    idx_rubrica = mapa.get("RUBRICA") or 3
+    idx_tipo = mapa.get("TIPO DOCUMENTO") or mapa.get("TIPO DOCUM") or 4
+    idx_comp = mapa.get("COMPETENCIA") or mapa.get("COMPETENC") or 5
+    idx_data = mapa.get("DATA PAGAMENTO") or mapa.get("DATA PAGAM") or 6
+    idx_valor = mapa.get("VALOR") or 7
+    idx_sit = mapa.get("SITUACAO") or 8
+
+    # Cria planilha de saída
+    wb_out = Workbook()
+    ws_out = wb_out.active
+    
+    # Novo Cabeçalho
+    headers = ["CÓDIGO", "FORNECEDOR", "RUBRICA", "DOCUMENTO", "COMPETÊNCIA", "DATA", "SITUAÇÃO", "VALOR"]
+    ws_out.append(headers)
+    
+    # Itera sobre os dados (pulando a linha 1 do cabeçalho)
+    for row in ws_in.iter_rows(min_row=2, values_only=True):
+        if not any(row): continue
+        
+        # Filtro de Data (Coluna COMPETÊNCIA - E)
+        try:
+            raw_comp = row[idx_comp - 1]
+            data_comp = converter_data_robusta(raw_comp)
+        except IndexError: continue
+            
+        # Se a data for válida e bater com o filtro
+        if data_comp and data_comp.month == mes and data_comp.year == ano:
+            
+            # --- Extração e Tratamento ---
+            
+            # 1. Coluna LANÇAMENTO (Nome e Código juntos)
+            raw_lanc = row[idx_lanc - 1] if idx_lanc <= len(row) else ""
+            fornecedor, codigo_txt = separar_duas_linhas(raw_lanc)
+            # Limpa o texto "Cod.: " se existir
+            codigo = codigo_txt.replace("Cod.:", "").replace("Cod:", "").strip()
+            
+            # 2. Coluna TIPO DOCUMENTO (Tipo e Doc juntos)
+            raw_tipo = row[idx_tipo - 1] if idx_tipo <= len(row) else ""
+            tipo_doc, num_doc = separar_duas_linhas(raw_tipo)
+            # Limpa o texto "Doc.: "
+            documento = num_doc.replace("Doc.:", "").replace("Doc:", "").strip()
+            
+            # 3. Outros campos diretos
+            rubrica = row[idx_rubrica - 1] if idx_rubrica <= len(row) else ""
+            situacao = row[idx_sit - 1] if idx_sit <= len(row) else ""
+            
+            # 4. Data Pagamento
+            raw_data = row[idx_data - 1] if idx_data <= len(row) else ""
+            data_pag = converter_data_robusta(raw_data)
+            
+            # 5. Valor
+            raw_valor = row[idx_valor - 1] if idx_valor <= len(row) else 0
+            valor_float = limpar_valor_monetario(raw_valor)
+            
+            # --- Monta a linha final ---
+            nova_linha = [
+                codigo,         # CÓDIGO
+                fornecedor,     # FORNECEDOR
+                rubrica,        # RUBRICA
+                documento,      # DOCUMENTO
+                data_comp,      # COMPETÊNCIA (obj data)
+                data_pag,       # DATA (obj data)
+                situacao,       # SITUAÇÃO
+                valor_float     # VALOR (float)
+            ]
+            
+            ws_out.append(nova_linha)
+
+    # --- Estilização Final ---
+    formatar_saida(ws_out)
+    
+    out = io.BytesIO()
+    wb_out.save(out)
+    out.seek(0)
+    return out
+
+def formatar_saida(ws):
+    borda = Border(left=Side(style='thin'), right=Side(style='thin'), 
+                   top=Side(style='thin'), bottom=Side(style='thin'))
+    
+    for row in ws.iter_rows():
+        for cell in row:
+            cell.border = borda
+            
+            # Cabeçalho
+            if cell.row == 1:
+                cell.font = Font(bold=True)
+                cell.alignment = Alignment(horizontal='center')
+            else:
+                # Alinhamentos
+                if cell.column in [1, 5, 6]: # Cod, Datas
+                    cell.alignment = Alignment(horizontal='center')
+                elif cell.column == 8: # Valor
+                    cell.alignment = Alignment(horizontal='right')
+                else:
+                    cell.alignment = Alignment(horizontal='left')
+                
+                # Formata Datas (Colunas E=5, F=6)
+                if cell.column == 5: # Competência (mmm-aa)
+                    if isinstance(cell.value, (datetime.date, datetime.datetime)):
+                        cell.value = mes_abreviado(cell.value)
+                elif cell.column == 6: # Data Pagamento (dd/mm/aaaa)
+                    if isinstance(cell.value, (datetime.date, datetime.datetime)):
+                        cell.number_format = 'dd/mm/yyyy'
+                        
+                # Formata Moeda (Coluna H=8)
+                if cell.column == 8:
+                    cell.number_format = '#,##0.00'
+
+# --- ROTAS FLASK ---
 
 @app.route("/")
 def index():
@@ -298,34 +321,35 @@ def index():
 def processar():
     if 'file' not in request.files: return "Sem arquivo", 400
     file = request.files['file']
-    if file.filename == '': return "Arquivo vazio", 400
+    if not file.filename: return "Arquivo vazio", 400
     
     try:
         mes = int(request.form.get('mes'))
         ano = int(request.form.get('ano'))
+        stream = file.stream
+        nome = file.filename.lower()
         
-        file_stream = file.stream
-        filename = file.filename.lower()
-
-        # --- PIPELINE DE DETECÇÃO E CONVERSÃO ---
+        # 1. Conversão
+        if is_html_file(stream):
+            print("LOG: Convertendo HTML...")
+            stream = convert_html_to_xlsx(stream)
+        elif nome.endswith('.xls'):
+            print("LOG: Convertendo XLS binário...")
+            stream = convert_xls_to_xlsx(stream)
+            
+        # 2. Processamento
+        output = processar_dados(stream, mes, ano)
         
-        # 1. Verifica se é HTML disfarçado de XLS (Erro BOF)
-        if is_html_file(file_stream):
-            print("Detectado arquivo HTML/Fake-XLS. Convertendo com Pandas...")
-            file_stream = convert_html_to_xlsx(file_stream)
+        filename_out = f"processado_{mes}_{ano}.xlsx"
+        return send_file(
+            output, 
+            as_attachment=True, 
+            download_name=filename_out,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
         
-        # 2. Verifica se é XLS binário antigo
-        elif filename.endswith('.xls'):
-            print("Detectado arquivo binário XLS antigo. Convertendo com xlrd...")
-            file_stream = convert_xls_to_openpyxl_stream(file_stream)
-
-        # 3. Processa
-        output = processar_excel_logic(file_stream, mes, ano)
-        
-        return send_file(output, as_attachment=True, download_name=f"processado_{mes}_{ano}.xlsx", mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-
     except Exception as e:
-        print(f"ERRO CRÍTICO: {e}")
+        print(f"ERRO: {e}")
         return f"Erro no processamento: {str(e)}", 500
 
 if __name__ == "__main__":
