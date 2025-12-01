@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Processador de Excel</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="visual-do-site.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="bg-custom-bg text-custom-text transition-colors duration-300" data-theme="white">
+    
+    <!-- Controles de Tema (Canto Superior Direito) -->
+    <div class="fixed top-4 right-4 flex space-x-2 z-50">
+        <button onclick="setTheme('white')" class="theme-btn bg-gray-100 text-gray-800 border-gray-300">Branco</button>
+        <button onclick="setTheme('green')" class="theme-btn bg-green-500 text-white border-green-600">Verde</button>
+        <button onclick="setTheme('blue')" class="theme-btn bg-blue-500 text-white border-blue-600">Azul</button>
+    </div>
+
+    <main class="min-h-screen flex items-center justify-center p-4">
+        <div class="w-full max-w-lg card-container p-8 rounded-2xl shadow-xl border border-opacity-20 backdrop-blur-sm">
+            
+            <h1 class="text-3xl font-bold mb-6 text-center">Processador de Excel</h1>
+            <p class="mb-8 text-center opacity-80">Filtre e formate seus documentos automaticamente.</p>
+            
+            <form id="uploadForm" class="space-y-6">
+                
+                <!-- Input de Arquivo -->
+                <div class="space-y-2">
+                    <label class="block text-sm font-semibold">Anexar Documento Excel</label>
+                    <input type="file" name="file" accept=".xlsx" required 
+                           class="block w-full text-sm file:mr-4 file:py-2.5 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:cursor-pointer transition-all border rounded-lg p-2 bg-white bg-opacity-50">
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <!-- Seletor de Mês -->
+                    <div class="space-y-2">
+                        <label class="block text-sm font-semibold">Mês</label>
+                        <select name="mes" id="mesSelect" class="w-full p-2.5 rounded-lg border bg-white bg-opacity-80 focus:ring-2 focus:outline-none transition-shadow">
+                            <option value="1">Janeiro</option>
+                            <option value="2">Fevereiro</option>
+                            <option value="3">Março</option>
+                            <option value="4">Abril</option>
+                            <option value="5">Maio</option>
+                            <option value="6">Junho</option>
+                            <option value="7">Julho</option>
+                            <option value="8">Agosto</option>
+                            <option value="9">Setembro</option>
+                            <option value="10">Outubro</option>
+                            <option value="11">Novembro</option>
+                            <option value="12">Dezembro</option>
+                        </select>
+                    </div>
+
+                    <!-- Seletor de Ano -->
+                    <div class="space-y-2">
+                        <label class="block text-sm font-semibold">Ano</label>
+                        <select name="ano" id="anoSelect" class="w-full p-2.5 rounded-lg border bg-white bg-opacity-80 focus:ring-2 focus:outline-none transition-shadow">
+                            <option value="2023">2023</option>
+                            <option value="2024">2024</option>
+                            <option value="2025" selected>2025</option>
+                            <option value="2026">2026</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Botão de Ação -->
+                <button type="submit" id="btnProcessar" class="w-full py-3.5 px-4 rounded-xl font-bold shadow-lg transform transition hover:-translate-y-0.5 hover:shadow-xl focus:ring-4 ring-opacity-50 text-white bg-custom-primary">
+                    Consertar e Baixar
+                </button>
+            </form>
+
+            <div id="status" class="mt-6 text-center text-sm font-medium hidden p-3 rounded-lg"></div>
+        </div>
+    </main>
+
+    <script>
+        // Lógica de Tema
+        function setTheme(theme) {
+            document.body.setAttribute('data-theme', theme);
+            localStorage.setItem('theme', theme);
+        }
+        
+        // Carregar tema salvo ou padrão
+        document.addEventListener('DOMContentLoaded', () => {
+            const saved = localStorage.getItem('theme') || 'white';
+            setTheme(saved);
+            
+            // Selecionar mês atual automaticamente
+            document.getElementById('mesSelect').value = new Date().getMonth() + 1;
+        });
+
+        // Lógica de Envio
+        document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('btnProcessar');
+            const status = document.getElementById('status');
+            const formData = new FormData(e.target);
+
+            btn.disabled = true;
+            btn.innerHTML = `<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Processando...`;
+            status.className = "mt-6 text-center text-sm font-medium p-3 rounded-lg bg-blue-100 text-blue-800";
+            status.textContent = "Processando arquivo, por favor aguarde...";
+            status.classList.remove('hidden');
+
+            try {
+                const res = await fetch('/processar', { method: 'POST', body: formData });
+                
+                if (res.ok) {
+                    const blob = await res.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = "planilha_pronta.xlsx";
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    status.className = "mt-6 text-center text-sm font-medium p-3 rounded-lg bg-green-100 text-green-800";
+                    status.textContent = "Sucesso! Download iniciado.";
+                } else {
+                    const err = await res.text();
+                    throw new Error(err || "Erro no servidor");
+                }
+            } catch (error) {
+                status.className = "mt-6 text-center text-sm font-medium p-3 rounded-lg bg-red-100 text-red-800";
+                status.textContent = "Erro: " + error.message;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = "Consertar e Baixar";
+            }
+        });
+    </script>
+</body>
+</html>

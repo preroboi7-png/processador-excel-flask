@@ -1,0 +1,85 @@
+/* Reset Básico e Fontes */
+body {
+    font-family: 'Inter', sans-serif;
+}
+
+/* --- Definição de Temas (Variáveis CSS) --- */
+
+/* Tema Branco (Padrão) */
+body[data-theme='white'] {
+    --bg-color: #f3f4f6;
+    --card-bg: #ffffff;
+    --text-color: #1f2937;
+    --primary-color: #2563eb; /* Azul padrão */
+    --primary-hover: #1d4ed8;
+    --border-color: #e5e7eb;
+}
+
+/* Tema Verde */
+body[data-theme='green'] {
+    --bg-color: #dcfce7; /* Green 100 */
+    --card-bg: #f0fdf4; /* Green 50 */
+    --text-color: #14532d; /* Green 900 */
+    --primary-color: #16a34a; /* Green 600 */
+    --primary-hover: #15803d; /* Green 700 */
+    --border-color: #86efac;
+}
+
+/* Tema Azul */
+body[data-theme='blue'] {
+    --bg-color: #dbeafe; /* Blue 100 */
+    --card-bg: #eff6ff; /* Blue 50 */
+    --text-color: #1e3a8a; /* Blue 900 */
+    --primary-color: #3b82f6; /* Blue 500 */
+    --primary-hover: #2563eb; /* Blue 600 */
+    --border-color: #93c5fd;
+}
+
+/* --- Aplicação das Variáveis --- */
+
+.bg-custom-bg {
+    background-color: var(--bg-color);
+}
+
+.text-custom-text {
+    color: var(--text-color);
+}
+
+.card-container {
+    background-color: var(--card-bg);
+    border-color: var(--border-color);
+}
+
+.bg-custom-primary {
+    background-color: var(--primary-color);
+}
+
+.bg-custom-primary:hover {
+    background-color: var(--primary-hover);
+}
+
+/* Estilo para Inputs e Selects baseados no tema */
+input, select {
+    border-color: var(--border-color) !important;
+    color: var(--text-color);
+}
+
+input:focus, select:focus {
+    border-color: var(--primary-color) !important;
+    box-shadow: 0 0 0 3px rgba(var(--primary-color), 0.2);
+}
+
+/* Botões de Tema */
+.theme-btn {
+    padding: 0.5rem 1rem;
+    border-radius: 9999px;
+    font-weight: 600;
+    font-size: 0.875rem;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    transition: transform 0.2s;
+    border-width: 1px;
+}
+
+.theme-btn:hover {
+    transform: scale(1.05);
+}
