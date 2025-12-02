@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Filtrador de Excel</title>
+    <title>Filtrador de arquivos da Supar</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         /* Estilo básico para a fonte Inter */
@@ -12,7 +12,7 @@
 </head>
 <body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
     <div id="app" class="bg-white p-6 sm:p-8 rounded-xl shadow-2xl w-full max-w-lg transition-all duration-300">
-        <h1 class="text-3xl font-extrabold text-gray-800 text-center mb-2">Filtrador de Excel</h1>
+        <h1 class="text-3xl font-extrabold text-gray-800 text-center mb-2">Filtrador de arquivos da Supar</h1>
         <p class="text-gray-500 text-center mb-6">Filtre e formate seus documentos automaticamente.</p>
 
         <form id="uploadForm" action="/processar" method="post" enctype="multipart/form-data" class="space-y-6">
@@ -164,3 +164,4 @@
     </script>
 </body>
 </html>
+
