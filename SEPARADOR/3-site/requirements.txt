@@ -4,3 +4,4 @@ xlrd
 pandas
 lxml
 gunicorn
+html5lib
