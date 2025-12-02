@@ -213,7 +213,7 @@ def processar_arquivo_limpo(wb_entrada, mes, ano):
     # Cria arquivo final
     wb_final = Workbook()
     ws_final = wb_final.active
-    ws_final.append(["CÓDIGO", "FORNECEDOR", "RUBRICA", "DOCUMENTO", "COMPETÊNCIA", "DATA", "SITUAÇÃO", "VALOR"])
+    ws_final.append(["CÓDIGO", "FORNECEDOR", "RUBRICA", "DOCUMENTO", "COMPETÊNCIA", "DATA PAGAMENTO", "SITUAÇÃO", "VALOR"])
 
     for row in ws_entrada.iter_rows(min_row=linha_header + 1, values_only=True):
         if not any(row): continue
@@ -331,3 +331,4 @@ def processar():
 
 if __name__ == "__main__":
     app.run(debug=True)
+
