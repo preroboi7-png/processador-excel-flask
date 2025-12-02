@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Filtrador de EXCEL da SUPAR</title>
+    <title>Filtrador de arquivos SUPAR</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="visual-do-site.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
@@ -20,7 +20,7 @@
     <main class="min-h-screen flex items-center justify-center p-4">
         <div class="w-full max-w-lg card-container p-8 rounded-2xl shadow-xl border border-opacity-20 backdrop-blur-sm">
             
-            <h1 class="text-3xl font-bold mb-6 text-center">Filtrador de EXCEL da SUPAR</h1>
+            <h1 class="text-3xl font-bold mb-6 text-center">Filtrador de arquivos SUPAR</h1>
             <p class="mb-8 text-center opacity-80">Filtre e formate seus documentos automaticamente.</p>
             
             <form id="uploadForm" class="space-y-6">
@@ -66,7 +66,7 @@
 
                 <!-- Botão de Ação -->
                 <button type="submit" id="btnProcessar" class="w-full py-3.5 px-4 rounded-xl font-bold shadow-lg transform transition hover:-translate-y-0.5 hover:shadow-xl focus:ring-4 ring-opacity-50 text-white bg-custom-primary">
-                    Consertar e Baixar
+                    Converter e Baixar
                 </button>
             </form>
 
@@ -126,7 +126,7 @@
                 status.textContent = "Erro: " + error.message;
             } finally {
                 btn.disabled = false;
-                btn.textContent = "Consertar e Baixar";
+                btn.textContent = "Converter e Baixar";
             }
         });
     </script>
