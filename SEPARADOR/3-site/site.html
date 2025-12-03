@@ -51,7 +51,7 @@
         }
         
         /* Estilos gerais do corpo e transição de tema */
-        body { fontFamily: 'Inter', sans-serif; }
+        body { font-family: 'Inter', sans-serif; }
         .bg-custom-bg { background-color: var(--color-bg); }
         .text-custom-text { color: var(--color-text); }
         .bg-custom-primary { background-color: var(--color-primary); }
@@ -97,12 +97,6 @@
                            file:bg-custom-secondary/20 file:text-custom-primary hover:file:bg-custom-secondary/30">
                 </div>
 
-                <div class="space-y-2">
-                    <label class="block text-sm font-semibold">Nome do Arquivo (Opcional)</label>
-                    <input type="text" name="nome_arquivo" placeholder="Ex: relatorio_final (Opcional)"
-                           class="w-full p-2.5 rounded-lg border bg-white bg-opacity-80 focus:ring-2 focus:outline-none transition-shadow text-gray-700">
-                </div>
-
                 <div class="grid grid-cols-2 gap-4">
                     <div class="space-y-2">
                         <label class="block text-sm font-semibold">Mês(es)</label>
@@ -120,7 +114,7 @@
                             <option value="11">Novembro</option>
                             <option value="12">Dezembro</option>
                         </select>
-                        <p class="text-xs opacity-60">Segure Ctrl para selecionar mais de um.</p>
+                        <p class="text-xs opacity-60">Segure Ctrl (ou Cmd) para selecionar vários.</p>
                     </div>
 
                     <div class="space-y-2">
@@ -172,9 +166,8 @@
             const saved = localStorage.getItem('theme') || 'white';
             setTheme(saved);
             
-            // Selecionar mês e ano atual automaticamente
+            // Selecionar mês e ano atual automaticamente (para select multiple, selecionamos a opção)
             const now = new Date();
-            // Para select multiple, precisamos selecionar a opção específica
             const mesSelect = document.getElementById('mesSelect');
             const mesAtual = (now.getMonth() + 1).toString();
             for (let i = 0; i < mesSelect.options.length; i++) {
@@ -208,9 +201,10 @@
                     let filename = "planilha_pronta.xlsx";
                     const contentDisposition = res.headers.get('Content-Disposition');
                     if (contentDisposition) {
-                        const match = contentDisposition.match(/filename="(.+?)"/);
+                        const match = contentDisposition.match(/filename\*?=['"]?([^"';]+)['"]?/i);
+                        // A regex é mais robusta e extrai o nome corretamente
                         if (match && match[1]) {
-                            filename = match[1];
+                             filename = decodeURIComponent(match[1].replace(/^utf-8''/i, '')).replace(/['"]/g, '').trim();
                         }
                     }
                     a.download = filename;
@@ -235,5 +229,3 @@
     </script>
 </body>
 </html>
-
-
