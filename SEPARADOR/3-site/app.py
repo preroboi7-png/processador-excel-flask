@@ -32,7 +32,7 @@ def normalizar(texto):
     """Remove acentos e deixa maiúsculo."""
     if texto is None: return ""
     return ''.join(c for c in unicodedata.normalize("NFD", str(texto).strip()) 
-                   if unicodedata.category(c) != "Mn").upper()
+                   if unicodeda.category(c) != "Mn").upper()
 
 def separar_duas_linhas(texto):
     """Separa texto com quebra de linha (Ex: Nome \n Código)"""
@@ -190,7 +190,7 @@ def encontrar_cabecalho(ws):
             return r
     return 1 # Assume linha 1 como fallback
 
-def processar_arquivo_limpo(wb_entrada, meses, ano):
+def processar_arquivo_limpo(wb_entrada, meses_selecionados, ano):
     ws_entrada = wb_entrada.active
     
     linha_header = encontrar_cabecalho(ws_entrada)
@@ -224,8 +224,8 @@ def processar_arquivo_limpo(wb_entrada, meses, ano):
         except: continue
 
         # FILTRO DE MÊS/ANO (AGORA COM LISTA DE MESES)
-        if dt_comp and dt_comp.month in meses and dt_comp.year == ano:
-            
+        if dt_comp and dt_comp.month in meses_selecionados and dt_comp.year == ano:
+
             # --- CORREÇÃO DE EXTRAÇÃO DE CÓDIGO/FORNECEDOR ---
             raw_lanc = row[idx_lanc - 1] if idx_lanc <= len(row) else ""
             full_lanc_text = str(raw_lanc).strip()
@@ -300,10 +300,9 @@ def processar():
     if not file.filename: return "Vazio", 400
 
     try:
-        # CAPTURA DE DADOS: Lista de meses e nome personalizado
+        # CAPTURA DE DADOS: Lista de meses
         meses = [int(x) for x in request.form.getlist('meses')]
         ano = int(request.form.get('ano'))
-        nome_arquivo_user = request.form.get('nome_arquivo')
         
         # Lê o conteúdo binário do arquivo na memória APENAS UMA VEZ
         file_bytes = file.read()
@@ -312,20 +311,13 @@ def processar():
         # 1. Carrega o arquivo usando a função robusta
         wb_entrada = carregar_workbook_inicial(file_bytes, filename)
         
-        # 2. Processamento e filtragem (passando a lista de meses)
+        # 2. Processamento e filtragem
         print("LOG: Processando dados e filtrando...")
         output = processar_arquivo_limpo(wb_entrada, meses, ano)
         
-        # 3. Definição do Nome do Arquivo de Saída
-        if nome_arquivo_user and nome_arquivo_user.strip():
-            nome_final = nome_arquivo_user.strip()
-            # Garante que tenha a extensão .xlsx
-            if not nome_final.lower().endswith('.xlsx'):
-                nome_final += '.xlsx'
-        else:
-            # Nome padrão se o usuário não preencher
-            lista_meses_str = "_".join(map(str, meses))
-            nome_final = f"processado_meses_{lista_meses_str}_{ano}.xlsx"
+        # 3. Definição do Nome do Arquivo de Saída (Padrão)
+        lista_meses_str = "_".join(map(str, sorted(meses)))
+        nome_final = f"processado_meses_{lista_meses_str}_{ano}.xlsx"
 
         return send_file(output, as_attachment=True, download_name=nome_final, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
