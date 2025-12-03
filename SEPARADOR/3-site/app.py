@@ -1,6 +1,6 @@
 import io
 import datetime
-import unicodedata
+import unicodedata # Já estava importado corretamente, só precisava do nome completo abaixo
 import re
 from flask import Flask, request, send_file, render_template
 from openpyxl import load_workbook, Workbook
@@ -9,7 +9,6 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.utils.exceptions import InvalidFileException
 
 # --- IMPORTAÇÕES DE COMPATIBILIDADE ---
-# Certifique-se de que pandas, lxml e xlrd estejam instalados
 try:
     import pandas as pd
     import lxml
@@ -31,8 +30,9 @@ app = Flask(__name__, template_folder='.', static_folder='.', static_url_path=''
 def normalizar(texto):
     """Remove acentos e deixa maiúsculo."""
     if texto is None: return ""
+    # CORREÇÃO AQUI: unicodeda.category -> unicodedata.category
     return ''.join(c for c in unicodedata.normalize("NFD", str(texto).strip()) 
-                   if unicodeda.category(c) != "Mn").upper()
+                   if unicodedata.category(c) != "Mn").upper()
 
 def separar_duas_linhas(texto):
     """Separa texto com quebra de linha (Ex: Nome \n Código)"""
