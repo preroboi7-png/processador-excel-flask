@@ -4,9 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Filtrador de excel SUPAR</title>
-    <!-- Carregamento do Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Importação da fonte Inter -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     
     <style>
@@ -53,7 +51,7 @@
         }
         
         /* Estilos gerais do corpo e transição de tema */
-        body { font-family: 'Inter', sans-serif; }
+        body { fontFamily: 'Inter', sans-serif; }
         .bg-custom-bg { background-color: var(--color-bg); }
         .text-custom-text { color: var(--color-text); }
         .bg-custom-primary { background-color: var(--color-primary); }
@@ -78,7 +76,6 @@
 </head>
 <body class="bg-custom-bg text-custom-text transition-colors duration-300" data-theme="white">
     
-    <!-- Controles de Tema (Canto Superior Direito) -->
     <div class="fixed top-4 right-4 flex space-x-2 z-50">
         <button onclick="setTheme('white')" class="theme-btn bg-gray-100 text-gray-800 border-gray-300">Branco</button>
         <button onclick="setTheme('green')" class="theme-btn bg-green-500 text-white border-green-600">Verde</button>
@@ -93,19 +90,23 @@
             
             <form id="uploadForm" action="/processar" method="post" enctype="multipart/form-data" class="space-y-6">
                 
-                <!-- Input de Arquivo -->
                 <div class="space-y-2">
                     <label class="block text-sm font-semibold">Anexar Documento Excel</label>
                     <input type="file" name="file" accept=".xlsx, .xls, .html" required 
-                            class="block w-full text-sm file:mr-4 file:py-2.5 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:cursor-pointer transition-all border rounded-lg p-2 bg-white bg-opacity-50
-                            file:bg-custom-secondary/20 file:text-custom-primary hover:file:bg-custom-secondary/30">
+                           class="block w-full text-sm file:mr-4 file:py-2.5 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:cursor-pointer transition-all border rounded-lg p-2 bg-white bg-opacity-50
+                           file:bg-custom-secondary/20 file:text-custom-primary hover:file:bg-custom-secondary/30">
+                </div>
+
+                <div class="space-y-2">
+                    <label class="block text-sm font-semibold">Nome do Arquivo (Opcional)</label>
+                    <input type="text" name="nome_arquivo" placeholder="Ex: relatorio_final (Opcional)"
+                           class="w-full p-2.5 rounded-lg border bg-white bg-opacity-80 focus:ring-2 focus:outline-none transition-shadow text-gray-700">
                 </div>
 
                 <div class="grid grid-cols-2 gap-4">
-                    <!-- Seletor de Mês -->
                     <div class="space-y-2">
-                        <label class="block text-sm font-semibold">Mês</label>
-                        <select name="mes" id="mesSelect" class="w-full p-2.5 rounded-lg border bg-white bg-opacity-80 focus:ring-2 focus:outline-none transition-shadow text-gray-700">
+                        <label class="block text-sm font-semibold">Mês(es)</label>
+                        <select name="meses" id="mesSelect" multiple class="w-full p-2.5 h-32 rounded-lg border bg-white bg-opacity-80 focus:ring-2 focus:outline-none transition-shadow text-gray-700">
                             <option value="1">Janeiro</option>
                             <option value="2">Fevereiro</option>
                             <option value="3">Março</option>
@@ -119,9 +120,9 @@
                             <option value="11">Novembro</option>
                             <option value="12">Dezembro</option>
                         </select>
+                        <p class="text-xs opacity-60">Segure Ctrl (ou Cmd) para selecionar vários.</p>
                     </div>
 
-                    <!-- Seletor de Ano -->
                     <div class="space-y-2">
                         <label class="block text-sm font-semibold">Ano</label>
                         <select name="ano" id="anoSelect" class="w-full p-2.5 rounded-lg border bg-white bg-opacity-80 focus:ring-2 focus:outline-none transition-shadow text-gray-700">
@@ -133,7 +134,6 @@
                     </div>
                 </div>
 
-                <!-- Botão de Ação -->
                 <button type="submit" id="btnProcessar" class="w-full py-3.5 px-4 rounded-xl font-bold shadow-lg transform transition hover:-translate-y-0.5 hover:shadow-xl focus:ring-4 ring-opacity-50 text-white bg-custom-primary">
                     Converter e Baixar
                 </button>
@@ -174,7 +174,14 @@
             
             // Selecionar mês e ano atual automaticamente
             const now = new Date();
-            document.getElementById('mesSelect').value = now.getMonth() + 1;
+            // Para select multiple, precisamos selecionar a opção específica
+            const mesSelect = document.getElementById('mesSelect');
+            const mesAtual = (now.getMonth() + 1).toString();
+            for (let i = 0; i < mesSelect.options.length; i++) {
+                if (mesSelect.options[i].value === mesAtual) {
+                    mesSelect.options[i].selected = true;
+                }
+            }
             document.getElementById('anoSelect').value = now.getFullYear();
         });
 
@@ -228,4 +235,3 @@
     </script>
 </body>
 </html>
-
