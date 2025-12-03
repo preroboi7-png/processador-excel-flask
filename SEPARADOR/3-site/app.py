@@ -461,13 +461,7 @@ Campos Diretos e Valor
            
 raw_valor = row[idx_valor - 1] if idx_valor <= len(row) else 0
 
-            # --- ALTERAÇÃO SOLICITADA: EXTRAI APENAS O ÚLTIMO VALOR SE HOUVER QUEBRA DE LINHA ---
-            if isinstance(raw_valor, str) and '\n' in raw_valor:
-                # Remove o primeiro e o último elemento vazio se houver (strip())
-                partes = [p.strip() for p in raw_valor.split('\n') if p.strip()]
-                if partes:
-                    raw_valor = partes[-1]
-            # --- FIM DA ALTERAÇÃO ---
+            # LINHAS DE TRATAMENTO DE QUEBRA DE LINHA REMOVIDAS (Mantém o raw_valor completo)
            
            
 val_float = limpar_valor_monetario(raw_valor)
@@ -506,7 +500,7 @@ cell.column == 8:
                    
 cell.alignment = Alignment(horizontal='right')
                    
-cell.number_format = '#,##0.00'
+cell.number_format = 'R$ #,##0.00' # FORMATO DE MOEDA ADICIONADO AQUI
                 
                 if
 cell.column == 5 and isinstance(cell.value, datetime.datetime):
